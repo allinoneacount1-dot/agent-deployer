@@ -27,7 +27,7 @@ export function Sidebar() {
 
       <nav className="mt-6 space-y-1">
         {nav.map(({ to, label, icon: Icon }) => {
-          const active = pathname === to || (to !== "/" && pathname.startsWith(to));
+          const active = pathname === to || pathname.startsWith(to + "/");
           return (
             <Link
               key={to}
