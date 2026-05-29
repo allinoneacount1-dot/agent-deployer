@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Loader2, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Loader2, Sparkles, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,8 +10,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { callDeployToken, type DeployResult as DeployResultT } from "@/lib/agent";
+import { shorten } from "@/lib/agent";
 import type { Network, AgentLogEntry } from "@/lib/types";
+import {
+  connectWallet,
+  getCurrentAccount,
+  deployTokenWithWallet,
+  hasInjectedWallet,
+  type RealDeployResult,
+} from "@/lib/wallet";
 import { DeployResult } from "./DeployResult";
 
 export function TokenForm() {
@@ -21,28 +28,67 @@ export function TokenForm() {
   const [network, setNetwork] = useState<Network>("base-sepolia");
   const [loading, setLoading] = useState(false);
   const [log, setLog] = useState<AgentLogEntry[]>([]);
-  const [result, setResult] = useState<DeployResultT | null>(null);
+  const [result, setResult] = useState<RealDeployResult | null>(null);
+  const [account, setAccount] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCurrentAccount().then(setAccount).catch(() => setAccount(null));
+    const eth = typeof window !== "undefined" ? window.ethereum : undefined;
+    if (!eth?.on) return;
+    const handler = (accs: unknown) => {
+      const list = accs as string[];
+      setAccount(list?.[0] ?? null);
+    };
+    eth.on("accountsChanged", handler);
+    return () => eth.removeListener?.("accountsChanged", handler);
+  }, []);
+
+  function pushLog(message: string) {
+    setLog((prev) => [
+      ...prev,
+      {
+        id: `s_${prev.length}`,
+        ts: new Date().toLocaleTimeString("en-GB"),
+        level: message.startsWith("✔") ? "ok" : message.startsWith("✖") ? "error" : "info",
+        message,
+      },
+    ]);
+  }
+
+  async function onConnect() {
+    setError(null);
+    try {
+      const a = await connectWallet();
+      setAccount(a);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   async function onDeploy(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
     setLoading(true);
     setResult(null);
     setLog([]);
-    const res = await callDeployToken(
-      { name, symbol, supply: Number(supply), network },
-      (msg) =>
-        setLog((prev) => [
-          ...prev,
-          {
-            id: `s_${prev.length}`,
-            ts: new Date().toLocaleTimeString("en-GB"),
-            level: msg.startsWith("✔") ? "ok" : "info",
-            message: msg,
-          },
-        ]),
-    );
-    setResult(res);
-    setLoading(false);
+    try {
+      if (!account) {
+        const a = await connectWallet();
+        setAccount(a);
+      }
+      const res = await deployTokenWithWallet(
+        { name, symbol, supply: Number(supply), network },
+        pushLog,
+      );
+      setResult(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      pushLog(`✖ ${msg}`);
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -51,6 +97,26 @@ export function TokenForm() {
         onSubmit={onDeploy}
         className="rounded-xl border border-white/10 bg-zinc-900/60 p-5 space-y-4"
       >
+        <div className="flex items-center justify-between rounded-lg border border-white/10 bg-black/40 px-3 py-2">
+          <div className="flex items-center gap-2 text-xs">
+            <Wallet className="h-3.5 w-3.5 text-zinc-400" />
+            {account ? (
+              <span className="font-mono text-emerald-300">{shorten(account)}</span>
+            ) : (
+              <span className="text-zinc-500">No wallet connected</span>
+            )}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onConnect}
+            disabled={!hasInjectedWallet()}
+            className="h-7 text-xs border-white/10 bg-transparent text-zinc-200 hover:bg-white/5"
+          >
+            {account ? "Switch" : "Connect"}
+          </Button>
+        </div>
         <div className="space-y-1.5">
           <Label htmlFor="name" className="text-xs text-zinc-400">Token name</Label>
           <Input
@@ -96,7 +162,7 @@ export function TokenForm() {
             <SelectContent>
               <SelectItem value="base-sepolia">Base Sepolia (testnet)</SelectItem>
               <SelectItem value="ethereum-sepolia">Ethereum Sepolia (testnet)</SelectItem>
-              <SelectItem value="base">Base (mainnet — mocked)</SelectItem>
+              <SelectItem value="base">Base (mainnet)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -114,14 +180,22 @@ export function TokenForm() {
           ) : (
             <>
               <Sparkles className="h-4 w-4" />
-              Deploy via Agent
+              {account ? "Deploy via Wallet" : "Connect & Deploy"}
             </>
           )}
         </Button>
         <p className="text-[11px] text-zinc-500 leading-relaxed">
-          Mock deployment. No wallet, no chain calls. Contract address and tx hash
-          are randomly generated for UI demo only.
+          Real on-chain deployment. You will sign the transaction in your wallet and pay gas
+          in the selected network's native token. Use Base Sepolia for free testnet ETH.
         </p>
+        {error && (
+          <p className="text-[11px] text-red-400 break-words">{error}</p>
+        )}
+        {!hasInjectedWallet() && (
+          <p className="text-[11px] text-amber-400">
+            No injected wallet detected. Install MetaMask or another EVM wallet to deploy.
+          </p>
+        )}
       </form>
 
       <div className="space-y-4">
