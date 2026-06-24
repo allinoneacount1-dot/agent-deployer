@@ -1,7 +1,12 @@
+import { useRouterState } from "@tanstack/react-router";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Landing page bypasses the app chrome entirely.
+  if (pathname === "/") return <>{children}</>;
+
   return (
     <div className="min-h-screen flex bg-black text-white">
       <Sidebar />
